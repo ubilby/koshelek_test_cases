@@ -1,53 +1,78 @@
-from requests import Request, Session
-from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
-from sys import getsizeof
-import json
+import aiohttp
+import asyncio
 import time
+import json
 import datetime
+from statistics import quantiles
 
-url = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'  # pro_api
-# url = 'https://sandbox-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'  # sandbox api
 
 parameters = {
-    "start": "0",
+    "start": "1",
     "limit": "10",
     "convert": "USD",
     "sort": "volume_24h"
 }
 
-headers = {
+headers_sandbox = {
   'Accepts': 'application/json',
-  'X-CMC_PRO_API_KEY': '08d4e9ad-9b13-4dd9-83fd-7eee09d1ca61',  # pro_api
-  # 'X-CMC_PRO_API_KEY': '9adea28d-5568-4eb3-870b-e3b943036e35',  # sand_box_api
+  'X-CMC_PRO_API_KEY': '9adea28d-5568-4eb3-870b-e3b943036e35',  # sand_box_api
 }
 
-session = Session()
-session.headers.update(headers)
-# connet and check the time for answer
-time_request = time.time()
+headers_pro = {
+  'Accepts': 'application/json',
+  'X-CMC_PRO_API_KEY': '08d4e9ad-9b13-4dd9-83fd-7eee09d1ca61',  # pro_api
+}
 
-try:
-    response = session.get(url, params=parameters)
-    data = json.loads(response.text)
-    # print(data)
+url_pro = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'  # pro_api
+url_sandbox = 'https://sandbox-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'  # sandbox api
+answers_times=[]
 
-except (ConnectionError, Timeout, TooManyRedirects) as e:
-    print(e)
+async def get(url):
+    async with aiohttp.ClientSession(headers=headers_pro) as session:
+        start = time.time()
+        async with session.get(url, params=parameters) as response:
+            answer = await response.text()
+            end = time.time()
 
-time_response = time.time()
+            assert end - start < 0.5, "latency is 500ms or more"
+            answers_times.append(end - start)
 
-# check what dates are actually
-today = datetime.datetime.isoformat(datetime.datetime.utcnow(), sep='T')[:10]
-dates_are_actually = True
-not_actually_tickers = []
-for i in data["data"]:
-    if i["last_updated"][:10] != today:
-        dates_are_actually = False
-        not_actually_tickers.append(i["name"])
+            data = json.loads(answer)
+            assert data["status"]["error_code"] == 0, data["status"]["error_message"]
+
+            today = datetime.datetime.isoformat(datetime.datetime.utcnow(), sep='T')[:10]
+            dates_are_actually = True
+
+            for i in data["data"]:
+
+                if i["last_updated"][:10] != today:
+                    dates_are_actually = False
+
+            assert dates_are_actually, "Ticker's dates are not actually!"
+
+            response_size = len(answer)
+            assert response_size<10240, "Response is too large"
+
+            return answer
 
 
-# asserts
-assert data["status"]["error_code"] == 0, data["status"]["error_message"]
-assert time_response - time_request < 0.5, "time period is longer than 500ms"
-assert getsizeof(response.text) < 10240, "response is too large"
-assert dates_are_actually, "This tickers dates are not actually: " + " ".join(not_actually_tickers)
+loop = asyncio.get_event_loop()
+coroutines = [get(url_pro) for _ in range(8)]
+
+
+results = loop.run_until_complete(asyncio.gather(*coroutines))
+print(f"Results: {results}")
+
+timestamps = [datetime.datetime.strptime(json.loads(i)['status']['timestamp'][:-1],
+    '%Y-%m-%dT%H:%M:%S.%f').timestamp() for i in results]
+
+print(f"Timestamps: {sorted(timestamps)}")
+print(f"Timings: {sorted(answers_times)}")
+
+rps = len(timestamps)/(max(timestamps) - min(timestamps))
+print(rps)
+assert rps > 5, "rps isn't more than 5"
+
+latency_80_percentil = quantiles(answers_times, n=100, method = "inclusive")[80]
+print(latency_80_percentil)
+assert latency_80_percentil < 0.45, "80% lanetcy > 0.45"
