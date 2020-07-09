@@ -28,14 +28,14 @@ url_sandbox = 'https://sandbox-api.coinmarketcap.com/v1/cryptocurrency/listings/
 answers_times = []
 
 
-async def main(url):
+async def main_test(url):
     async with aiohttp.ClientSession(headers=headers_pro) as session:
         start = time.time()
         async with session.get(url, params=parameters) as response:
             answer = await response.text()
             end = time.time()
+            assert end - start < 0.5, "Main test failed, latency is 500ms or more"
 
-            assert end - start < 0.5, "latency is 500ms or more"
             answers_times.append(end - start)
 
             data = json.loads(answer)
@@ -49,29 +49,23 @@ async def main(url):
                 if i["last_updated"][:10] != today:
                     dates_are_actually = False
 
-            assert dates_are_actually, "Ticker's dates are not actually!"
+            assert dates_are_actually, "Main test failed, Ticker's dates are not actually!"
 
             response_size = len(answer)
-            assert response_size < 10240, "Response is too large"
+            assert response_size < 10240, "Main test failed, Response is too large"
 
             return answer
 
 
-loop = asyncio.get_event_loop()
-coroutines = [main(url_pro) for _ in range(8)]
-results = loop.run_until_complete(asyncio.gather(*coroutines))
-timestamps = [datetime.datetime.strptime(json.loads(i)['status']['timestamp'][:-1],
+def test_coin_market_api():
+    loop = asyncio.get_event_loop()
+    coroutines = [main_test(url_pro) for _ in range(8)]
+    results = loop.run_until_complete(asyncio.gather(*coroutines))
+    timestamps = [datetime.datetime.strptime(json.loads(i)['status']['timestamp'][:-1],
     '%Y-%m-%dT%H:%M:%S.%f').timestamp() for i in results]
 
-rps = len(timestamps)/(max(timestamps) - min(timestamps))
-assert rps > 5, "rps isn't more than 5"
+    rps = len(timestamps)/(max(timestamps) - min(timestamps))
+    assert rps > 5, "rps isn't more than 5"
 
-latency_80_percentil = quantiles(answers_times, n=100, method="inclusive")[80]
-assert latency_80_percentil < 0.45, "80% lanetcy >= 0.45"
-
-print("""Everything passed:
-    - Packages sizes are less than 10KB
-    - Information is relevant
-    - Latency < 0.5s
-    - 80% lanetcy < 0.45s
-    - rps > 5""")
+    latency_80_percentil = quantiles(answers_times, n=100, method="inclusive")[80]
+    assert latency_80_percentil < 0.45, "80% lanetcy >= 0.45"
