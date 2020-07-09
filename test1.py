@@ -25,9 +25,10 @@ headers_pro = {
 
 url_pro = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'  # pro_api
 url_sandbox = 'https://sandbox-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'  # sandbox api
-answers_times=[]
+answers_times = []
 
-async def get(url):
+
+async def main(url):
     async with aiohttp.ClientSession(headers=headers_pro) as session:
         start = time.time()
         async with session.get(url, params=parameters) as response:
@@ -51,28 +52,26 @@ async def get(url):
             assert dates_are_actually, "Ticker's dates are not actually!"
 
             response_size = len(answer)
-            assert response_size<10240, "Response is too large"
+            assert response_size < 10240, "Response is too large"
 
             return answer
 
 
 loop = asyncio.get_event_loop()
-coroutines = [get(url_pro) for _ in range(8)]
-
-
+coroutines = [main(url_pro) for _ in range(8)]
 results = loop.run_until_complete(asyncio.gather(*coroutines))
-print(f"Results: {results}")
-
 timestamps = [datetime.datetime.strptime(json.loads(i)['status']['timestamp'][:-1],
     '%Y-%m-%dT%H:%M:%S.%f').timestamp() for i in results]
 
-print(f"Timestamps: {sorted(timestamps)}")
-print(f"Timings: {sorted(answers_times)}")
-
 rps = len(timestamps)/(max(timestamps) - min(timestamps))
-print(rps)
 assert rps > 5, "rps isn't more than 5"
 
-latency_80_percentil = quantiles(answers_times, n=100, method = "inclusive")[80]
-print(latency_80_percentil)
-assert latency_80_percentil < 0.45, "80% lanetcy > 0.45"
+latency_80_percentil = quantiles(answers_times, n=100, method="inclusive")[80]
+assert latency_80_percentil < 0.45, "80% lanetcy >= 0.45"
+
+print("""Everything passed:
+    - Packages sizes are less than 10KB
+    - Information is relevant
+    - Latency < 0.5s
+    - 80% lanetcy < 0.45s
+    - rps > 5""")
